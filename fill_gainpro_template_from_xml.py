@@ -36,7 +36,6 @@ CURRENT_PERIOD_TAG = "KwotaA"
 CAGR_COLUMN = 21  # Column U
 MIN_ANNUALISATION_DAYS = 90
 FULL_YEAR_DAY_COUNTS = {365, 366}
-NET_REVENUE_PATHS = ("RZiS/RZiSKalk/A", "RZiS/RZiSPor/A")
 # In three-column ESF files, the far-right comparative column is KwotaB1.
 # If an XML has only one comparative column, fall back to KwotaB.
 COMPARATIVE_PERIOD_TAGS = ("KwotaB1", "KwotaB")
@@ -510,6 +509,38 @@ def cell_is_empty(cell) -> bool:
     return cell.value in (None, "")
 
 
+def group_empty_cogs_rows(ws, jobs: list[FillJob], dry_run: bool) -> list[str]:
+    cogs_rows = [
+        find_row(ws, label, "1. REPORTED FIGURES", "2. ADJUSTMENTS ")
+        for label in ("COGS", "Other COGS")
+    ]
+    gross_margin_row = find_row(
+        ws, "Gross margin", "1. REPORTED FIGURES", "2. ADJUSTMENTS "
+    )
+    used_columns = [find_year_column(ws, job.year) for job in jobs]
+    has_cogs_values = any(
+        not cell_is_empty(ws.cell(row=row, column=column))
+        for row in cogs_rows
+        for column in used_columns
+    )
+
+    if not dry_run:
+        for row in cogs_rows:
+            dimension = ws.row_dimensions[row]
+            dimension.hidden = not has_cogs_values
+            dimension.outlineLevel = 0 if has_cogs_values else 1
+            dimension.collapsed = False
+
+        gross_margin_dimension = ws.row_dimensions[gross_margin_row]
+        gross_margin_dimension.hidden = False
+        gross_margin_dimension.outlineLevel = 0
+        gross_margin_dimension.collapsed = not has_cogs_values
+
+    if has_cogs_values:
+        return ["SHOW COGS rows: values found in reported figures"]
+    return [f"GROUP hidden empty COGS rows: {cogs_rows[0]}:{cogs_rows[-1]}"]
+
+
 def set_formula_font(cell) -> None:
     font = copy(cell.font)
     font.color = "000000"
@@ -734,11 +765,6 @@ def fill_period(
         messages.extend(annualisation_messages)
 
     for mapping in MAPPINGS:
-        if annualisation_rows and mapping.row_label in {
-            "Sales of products",
-            "Sales of goods and materials",
-        }:
-            continue
         row = find_mapping_row(ws, mapping)
         input_row = (
             annualisation_rows[mapping.row_label]
@@ -783,33 +809,25 @@ def fill_period(
 
     net_revenue_cell = ws.cell(row=net_revenue_row, column=col)
     if annualisation_rows:
-        raw_revenue, revenue_path, revenue_tag = xml_data.amount(NET_REVENUE_PATHS, period_tags)
         annual_revenue_cell = ws.cell(row=annualisation_rows["Net revenue"], column=col)
-        if raw_revenue is None or revenue_path is None or revenue_tag is None:
-            messages.append(
-                f"MISS {col_letter}{annualisation_rows['Net revenue']} Net revenue: no XML value found"
-            )
-        elif overwrite or cell_is_empty(annual_revenue_cell):
-            value = scaled_excel_value(raw_revenue, PLN_TO_PLNM, blank_if_zero=True)
+        if overwrite or cell_is_empty(annual_revenue_cell):
             if not dry_run:
-                annual_revenue_cell.value = value
-                if add_comments and value is not None:
-                    annual_revenue_cell.comment = source_comment(xml_data, revenue_tag, revenue_path)
+                annual_revenue_cell.value = f"={col_letter}{revenue_total_row}"
+                annual_revenue_cell.comment = None
+                set_formula_font(annual_revenue_cell)
                 net_revenue_cell.value = (
-                    f"={col_letter}{annualisation_rows['Net revenue']}/"
+                    f"={col_letter}{revenue_total_row}/"
                     f"${col_letter}${annualisation_rows['Annualisation factor']}"
                 )
                 net_revenue_cell.comment = None
                 set_formula_font(net_revenue_cell)
-            rendered = "" if value is None else f"{value:.8f}".rstrip("0").rstrip(".")
-            confidence_labels.add("Revenue")
             messages.append(
-                f"SET  {col_letter}{annualisation_rows['Net revenue']} Net revenue: "
-                f"{rendered} from {revenue_path}/{revenue_tag}"
+                f"LINK {col_letter}{annualisation_rows['Net revenue']} Net revenue: "
+                f"={col_letter}{revenue_total_row}"
             )
             messages.append(
                 f"LINK {col_letter}{net_revenue_row} Net revenue: "
-                f"={col_letter}{annualisation_rows['Net revenue']}/"
+                f"={col_letter}{revenue_total_row}/"
                 f"${col_letter}${annualisation_rows['Annualisation factor']}"
             )
         else:
@@ -1011,6 +1029,7 @@ def main(argv: list[str]) -> int:
 
     all_messages.extend(update_cagr_formulas(ws, jobs, dry_run=args.dry_run))
     all_messages.extend(group_unused_year_columns(ws, jobs, dry_run=args.dry_run))
+    all_messages.extend(group_empty_cogs_rows(ws, jobs, dry_run=args.dry_run))
 
     for message in all_messages:
         print(message)
