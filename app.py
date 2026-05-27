@@ -54,6 +54,10 @@ st.write(
     "Upload up to 5 XML files for annual reports from KRS. "
     "Order and file names do not matter."
 )
+st.info(
+    "FTEs and Segmentations will never be filled out because these are not "
+    "included in XMLs. These fields still need to be filled out manually."
+)
 st.warning(
     'Use normal XML files only. Files ending in ".xml.xades" will not work. '
     'If KRS provides an .xades file, select "Pobierz treść dokumentu" '
