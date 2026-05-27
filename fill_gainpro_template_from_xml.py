@@ -14,7 +14,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterable
@@ -34,6 +34,9 @@ FINANCIALS_SHEET = "Financials"
 PLN_TO_PLNM = Decimal("1000000")
 CURRENT_PERIOD_TAG = "KwotaA"
 CAGR_COLUMN = 21  # Column U
+MIN_ANNUALISATION_DAYS = 90
+FULL_YEAR_DAY_COUNTS = {365, 366}
+NET_REVENUE_PATHS = ("RZiS/RZiSKalk/A", "RZiS/RZiSPor/A")
 # In three-column ESF files, the far-right comparative column is KwotaB1.
 # If an XML has only one comparative column, fall back to KwotaB.
 COMPARATIVE_PERIOD_TAGS = ("KwotaB1", "KwotaB")
@@ -66,6 +69,7 @@ class FillJob:
     xml_data: "XmlFinancials"
     year: int
     period_tags: tuple[str, ...]
+    period_xml_data: "XmlFinancials | None" = None
 
 
 MAPPINGS: tuple[Mapping, ...] = (
@@ -216,6 +220,28 @@ class XmlFinancials:
         if not self.period_end:
             raise ValueError("Could not find OkresDo in XML; pass --target-year explicitly.")
         return datetime.fromisoformat(self.period_end).year
+
+    @property
+    def period_start_date(self) -> date | None:
+        return date.fromisoformat(self.period_start) if self.period_start else None
+
+    @property
+    def period_end_date(self) -> date | None:
+        return date.fromisoformat(self.period_end) if self.period_end else None
+
+    @property
+    def period_days(self) -> int | None:
+        if self.period_start_date is None or self.period_end_date is None:
+            return None
+        return (self.period_end_date - self.period_start_date).days + 1
+
+    @property
+    def requires_annualisation(self) -> bool:
+        return (
+            self.period_days is not None
+            and self.period_days > MIN_ANNUALISATION_DAYS
+            and self.period_days not in FULL_YEAR_DAY_COUNTS
+        )
 
     def amount(
         self, paths: Iterable[str], period_tags: Iterable[str]
@@ -535,6 +561,151 @@ def source_comment(xml_data: XmlFinancials, period_tag: str, xml_path: str) -> C
     return Comment(f"Gain:\nAR{xml_data.year}", "Codex")
 
 
+def find_annualisation_row(ws, label: str) -> int:
+    return find_row(ws, label, "Annualisation", None)
+
+
+def set_formula_cell(ws, row: int, col: int, formula: str, dry_run: bool) -> None:
+    if not dry_run:
+        cell = ws.cell(row=row, column=col)
+        cell.value = formula
+        cell.comment = None
+        set_formula_font(cell)
+
+
+def configure_annualisation(
+    ws,
+    period_xml_data: XmlFinancials,
+    year: int,
+    col: int,
+    dry_run: bool,
+) -> tuple[dict[str, int], list[str]]:
+    col_letter = get_column_letter(col)
+    annualisation_start_row = find_row(ws, "Annualisation", None, None)
+    annualisation_end_row = find_annualisation_row(ws, "YoY growth (%)")
+    rows = {
+        label: find_annualisation_row(ws, label)
+        for label in (
+            "Starting date",
+            "Ending date",
+            "Annualisation factor",
+            "Footnote (copy on CMS)",
+            "Net revenue",
+            "Other income",
+            "Revenue",
+            "COGS",
+            "Other COGS",
+            "Gross margin",
+            "Reported EBIT",
+            "Reported EBIT Check",
+            "Total depreciation",
+            "Total amortisation",
+            "D&A",
+            "EBITDA",
+            "CAPEX",
+        )
+    }
+    if period_xml_data.period_start_date is None or period_xml_data.period_end_date is None:
+        raise ValueError(f"Could not identify the reporting period dates for {year}.")
+
+    if not dry_run:
+        for row in range(annualisation_start_row, annualisation_end_row + 1):
+            ws.row_dimensions[row].hidden = False
+        start_cell = ws.cell(row=rows["Starting date"], column=col)
+        end_cell = ws.cell(row=rows["Ending date"], column=col)
+        start_cell.value = period_xml_data.period_start_date
+        end_cell.value = period_xml_data.period_end_date
+        start_cell.number_format = "dd-mm-yyyy"
+        end_cell.number_format = "dd-mm-yyyy"
+
+    set_formula_cell(
+        ws,
+        rows["Annualisation factor"],
+        col,
+        (
+            f'=IF(AND({col_letter}{rows["Starting date"]}<>0,'
+            f'{col_letter}{rows["Ending date"]}<>0),'
+            f'({col_letter}{rows["Ending date"]}-{col_letter}{rows["Starting date"]}+1)/365,"")'
+        ),
+        dry_run,
+    )
+    set_formula_cell(
+        ws,
+        rows["Footnote (copy on CMS)"],
+        col,
+        (
+            f'=IF({col_letter}{rows["Annualisation factor"]}<>"","FY"&{col_letter}${HEADER_ROW}'
+            f'&": the Company reported for the period from "&TEXT({col_letter}{rows["Starting date"]},"dd-mm")'
+            f'&" to "&TEXT({col_letter}{rows["Ending date"]},"dd-mm")'
+            f'&". Figures have been annualised to reflect the full-year effect, assuming no seasonality.","")'
+        ),
+        dry_run,
+    )
+    scratchpad_formulas = {
+        "Revenue": (
+            f'=IFERROR({col_letter}{rows["Net revenue"]}+'
+            f'{col_letter}{rows["Other income"]},"")'
+        ),
+        "Gross margin": (
+            f'={col_letter}{rows["Revenue"]}-IFERROR({col_letter}{rows["COGS"]}+'
+            f'{col_letter}{rows["Other COGS"]},"")'
+        ),
+        "Reported EBIT Check": (
+            f'={col_letter}{rows["EBITDA"]}-{col_letter}{rows["Total depreciation"]}'
+            f'-{col_letter}{rows["Total amortisation"]}'
+        ),
+        "EBITDA": (
+            f'=IFERROR({col_letter}{rows["D&A"]}+{col_letter}{rows["Reported EBIT"]},"")'
+        ),
+    }
+    for label, formula in scratchpad_formulas.items():
+        set_formula_cell(ws, rows[label], col, formula, dry_run)
+
+    reported_rows = {
+        label: find_row(ws, label, "1. REPORTED FIGURES", "2. ADJUSTMENTS ")
+        for label in (
+            "Net revenue",
+            "Other income",
+            "Revenue",
+            "COGS",
+            "Other COGS",
+            "Gross margin",
+            "Reported EBIT",
+            "D&A",
+            "EBITDA",
+            "CAPEX",
+        )
+    }
+    reported_formulas = {
+        "Revenue": (
+            f'=IFERROR({col_letter}{reported_rows["Net revenue"]}+'
+            f'{col_letter}{reported_rows["Other income"]},"")'
+        ),
+        "Gross margin": (
+            f'={col_letter}{reported_rows["Revenue"]}-IFERROR({col_letter}{reported_rows["COGS"]}+'
+            f'{col_letter}{reported_rows["Other COGS"]},"")'
+        ),
+        "EBITDA": (
+            f'=IFERROR({col_letter}{reported_rows["D&A"]}+{col_letter}{reported_rows["Reported EBIT"]},"")'
+        ),
+    }
+    for label, formula in reported_formulas.items():
+        set_formula_cell(ws, reported_rows[label], col, formula, dry_run)
+
+    messages = [
+        (
+            f"ANNUALISE {year}: {period_xml_data.period_start_date.isoformat()} to "
+            f"{period_xml_data.period_end_date.isoformat()} ({period_xml_data.period_days} days)"
+        ),
+        (
+            f"SET  {col_letter}{rows['Starting date']}:{col_letter}{rows['Ending date']} "
+            "Annualisation dates and factor"
+        ),
+        f"SHOW annualisation rows: {annualisation_start_row}:{annualisation_end_row}",
+    ]
+    return rows, messages
+
+
 def fill_period(
     ws,
     xml_data: XmlFinancials,
@@ -543,6 +714,7 @@ def fill_period(
     overwrite: bool,
     add_comments: bool,
     dry_run: bool,
+    period_xml_data: XmlFinancials | None = None,
 ) -> list[str]:
     col = find_year_column(ws, year)
     col_letter = get_column_letter(col)
@@ -554,14 +726,30 @@ def fill_period(
         ws, "Interest bearing debt / gross debt", "1. REPORTED FIGURES", "2. ADJUSTMENTS "
     )
     debt_component_rows = find_debt_component_rows(ws)
+    annualisation_rows: dict[str, int] | None = None
+    if period_xml_data and period_xml_data.requires_annualisation:
+        annualisation_rows, annualisation_messages = configure_annualisation(
+            ws, period_xml_data, year, col, dry_run
+        )
+        messages.extend(annualisation_messages)
 
     for mapping in MAPPINGS:
+        if annualisation_rows and mapping.row_label in {
+            "Sales of products",
+            "Sales of goods and materials",
+        }:
+            continue
         row = find_mapping_row(ws, mapping)
-        cell = ws.cell(row=row, column=col)
+        input_row = (
+            annualisation_rows[mapping.row_label]
+            if annualisation_rows and mapping.row_label in {"Other income", "COGS", "Reported EBIT", "D&A", "CAPEX"}
+            else row
+        )
+        cell = ws.cell(row=input_row, column=col)
         raw_value, xml_path, period_tag = xml_data.amount(mapping.xml_paths, period_tags)
 
         if raw_value is None or xml_path is None or period_tag is None:
-            messages.append(f"MISS {col_letter}{row} {mapping.row_label}: no XML value found")
+            messages.append(f"MISS {col_letter}{input_row} {mapping.row_label}: no XML value found")
             continue
 
         if mapping.confidence_label:
@@ -578,11 +766,57 @@ def fill_period(
             cell.value = value
             if add_comments and value is not None:
                 cell.comment = source_comment(xml_data, period_tag, xml_path)
+            if annualisation_rows and input_row != row:
+                reported_cell = ws.cell(row=row, column=col)
+                reported_cell.value = (
+                    f"={col_letter}{input_row}/${col_letter}${annualisation_rows['Annualisation factor']}"
+                )
+                reported_cell.comment = None
+                set_formula_font(reported_cell)
         rendered = "" if value is None else f"{value:.8f}".rstrip("0").rstrip(".")
-        messages.append(f"SET  {col_letter}{row} {mapping.row_label}: {rendered} from {xml_path}/{period_tag}")
+        messages.append(f"SET  {col_letter}{input_row} {mapping.row_label}: {rendered} from {xml_path}/{period_tag}")
+        if annualisation_rows and input_row != row:
+            messages.append(
+                f"LINK {col_letter}{row} {mapping.row_label}: "
+                f"={col_letter}{input_row}/${col_letter}${annualisation_rows['Annualisation factor']}"
+            )
 
     net_revenue_cell = ws.cell(row=net_revenue_row, column=col)
-    if overwrite or cell_is_empty(net_revenue_cell):
+    if annualisation_rows:
+        raw_revenue, revenue_path, revenue_tag = xml_data.amount(NET_REVENUE_PATHS, period_tags)
+        annual_revenue_cell = ws.cell(row=annualisation_rows["Net revenue"], column=col)
+        if raw_revenue is None or revenue_path is None or revenue_tag is None:
+            messages.append(
+                f"MISS {col_letter}{annualisation_rows['Net revenue']} Net revenue: no XML value found"
+            )
+        elif overwrite or cell_is_empty(annual_revenue_cell):
+            value = scaled_excel_value(raw_revenue, PLN_TO_PLNM, blank_if_zero=True)
+            if not dry_run:
+                annual_revenue_cell.value = value
+                if add_comments and value is not None:
+                    annual_revenue_cell.comment = source_comment(xml_data, revenue_tag, revenue_path)
+                net_revenue_cell.value = (
+                    f"={col_letter}{annualisation_rows['Net revenue']}/"
+                    f"${col_letter}${annualisation_rows['Annualisation factor']}"
+                )
+                net_revenue_cell.comment = None
+                set_formula_font(net_revenue_cell)
+            rendered = "" if value is None else f"{value:.8f}".rstrip("0").rstrip(".")
+            confidence_labels.add("Revenue")
+            messages.append(
+                f"SET  {col_letter}{annualisation_rows['Net revenue']} Net revenue: "
+                f"{rendered} from {revenue_path}/{revenue_tag}"
+            )
+            messages.append(
+                f"LINK {col_letter}{net_revenue_row} Net revenue: "
+                f"={col_letter}{annualisation_rows['Net revenue']}/"
+                f"${col_letter}${annualisation_rows['Annualisation factor']}"
+            )
+        else:
+            messages.append(
+                f"SKIP {col_letter}{annualisation_rows['Net revenue']} Net revenue: cell already populated"
+            )
+    elif overwrite or cell_is_empty(net_revenue_cell):
         if not dry_run:
             net_revenue_cell.value = f"={col_letter}{revenue_total_row}"
             net_revenue_cell.comment = None
@@ -645,7 +879,7 @@ def build_fill_jobs(
     if len(xml_files) == 1:
         xml_data = xml_files[0]
         current_year = target_year or xml_data.year
-        jobs = [FillJob(xml_data, current_year, (CURRENT_PERIOD_TAG,))]
+        jobs = [FillJob(xml_data, current_year, (CURRENT_PERIOD_TAG,), xml_data)]
         if fill_comparative and years > 1:
             jobs.append(FillJob(xml_data, current_year - 1, COMPARATIVE_PERIOD_TAGS))
         return jobs[:years]
@@ -654,6 +888,7 @@ def build_fill_jobs(
         raise ValueError("--target-year is only supported when filling from one XML file.")
 
     sorted_xmls = sorted(xml_files, key=lambda item: item.year, reverse=True)
+    period_xml_by_year = {xml_data.year: xml_data for xml_data in sorted_xmls}
     jobs: list[FillJob] = []
     seen_years: set[int] = set()
 
@@ -669,7 +904,7 @@ def build_fill_jobs(
         for year, period_tags in planned:
             if year in seen_years:
                 continue
-            jobs.append(FillJob(xml_data, year, period_tags))
+            jobs.append(FillJob(xml_data, year, period_tags, period_xml_by_year.get(year)))
             seen_years.add(year)
             if len(jobs) >= years:
                 return jobs
@@ -770,6 +1005,7 @@ def main(argv: list[str]) -> int:
                 overwrite=overwrite,
                 add_comments=not args.no_comments,
                 dry_run=args.dry_run,
+                period_xml_data=job.period_xml_data,
             )
         )
 

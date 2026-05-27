@@ -4,7 +4,11 @@ import tempfile
 
 import streamlit as st
 
-from fill_gainpro_template_from_xml import XmlFinancials, main as fill_template
+from fill_gainpro_template_from_xml import (
+    XmlFinancials,
+    build_fill_jobs,
+    main as fill_template,
+)
 
 
 APP_DIR = Path(__file__).parent
@@ -127,6 +131,17 @@ if submitted:
                 args.append("--fill-comparative")
 
             try:
+                planned_jobs = build_fill_jobs(
+                    [XmlFinancials(path) for path in xml_paths],
+                    target_year=None,
+                    fill_comparative=should_fill_comparative,
+                    years=int(years_to_fill),
+                )
+                annualised_jobs = [
+                    job
+                    for job in planned_jobs
+                    if job.period_xml_data and job.period_xml_data.requires_annualisation
+                ]
                 fill_template(args)
                 download_filename = output_filename(xml_paths[0])
             except SystemExit as exc:
@@ -137,6 +152,24 @@ if submitted:
                 st.stop()
 
             result = output_path.read_bytes()
+
+    if annualised_jobs:
+        periods = ", ".join(
+            (
+                f"FY{job.year} "
+                f"({job.period_xml_data.period_start_date:%d-%m-%Y} to "
+                f"{job.period_xml_data.period_end_date:%d-%m-%Y})"
+            )
+            for job in annualised_jobs
+        )
+        st.warning(
+            f"Annualisation detected for {periods}. The workbook has been generated "
+            "with annualised flow figures. Please check the dates, annualisation "
+            "factor, P&L and cash flow values particularly carefully. "
+            "Important: a broken fiscal year can only be detected when the XML for "
+            "that fiscal year is uploaded. A later full-year XML containing comparative "
+            "figures does not provide the prior report's start and end dates."
+        )
 
     st.success("Your filled Excel workbook is ready.")
 
