@@ -1,15 +1,26 @@
 from pathlib import Path
+import re
 import tempfile
 
 import streamlit as st
 
-from fill_gainpro_template_from_xml import main as fill_template
+from fill_gainpro_template_from_xml import XmlFinancials, main as fill_template
 
 
 APP_DIR = Path(__file__).parent
 TEMPLATE_PATH = APP_DIR / "assets" / "gainpro_template.xlsx"
 MAX_FILES = 5
 MAX_FILE_SIZE_MB = 25
+
+
+def output_filename(xml_path: Path) -> str:
+    company = XmlFinancials(xml_path).company or "Filled"
+    safe_company = re.sub(r'[<>:"/\\|?*]+', "", company).strip()
+    safe_company = re.sub(r"\s+", " ", safe_company)
+    if not safe_company:
+        safe_company = "Filled"
+    safe_company = safe_company[:120].strip() or "Filled"
+    return f"{safe_company} Financials.xlsx"
 
 
 st.set_page_config(
@@ -98,6 +109,7 @@ if submitted:
 
             try:
                 fill_template(args)
+                download_filename = output_filename(xml_paths[0])
             except SystemExit as exc:
                 st.error(f"The workbook could not be created: {exc}")
                 st.stop()
@@ -112,7 +124,7 @@ if submitted:
     st.download_button(
         label="Download Filled Excel Workbook",
         data=result,
-        file_name="Filled_Financials.xlsx",
+        file_name=download_filename,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
