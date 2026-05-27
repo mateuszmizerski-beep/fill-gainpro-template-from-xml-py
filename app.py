@@ -11,14 +11,28 @@ APP_DIR = Path(__file__).parent
 TEMPLATE_PATH = APP_DIR / "assets" / "gainpro_template.xlsx"
 MAX_FILES = 5
 MAX_FILE_SIZE_MB = 25
+LEGAL_FORM_SUFFIX = re.compile(
+    r"\s+(?:"
+    r"spółka\b.*"
+    r"|sp\.?\s*z\.?\s*o\.?\s*o\.?.*"
+    r"|sp\.?\s*k\.?.*"
+    r"|sp\.?\s*j\.?.*"
+    r"|s\.?\s*k\.?\s*a\.?.*"
+    r"|s\.?\s*a\.?.*"
+    r")$",
+    re.IGNORECASE,
+)
 
 
 def output_filename(xml_path: Path) -> str:
     company = XmlFinancials(xml_path).company or "Filled"
     safe_company = re.sub(r'[<>:"/\\|?*]+', "", company).strip()
     safe_company = re.sub(r"\s+", " ", safe_company)
+    safe_company = LEGAL_FORM_SUFFIX.sub("", safe_company).strip()
     if not safe_company:
         safe_company = "Filled"
+    elif safe_company.isupper():
+        safe_company = safe_company.title()
     safe_company = safe_company[:120].strip() or "Filled"
     return f"{safe_company} Financials.xlsx"
 
