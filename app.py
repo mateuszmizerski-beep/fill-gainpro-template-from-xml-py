@@ -142,7 +142,4 @@ if submitted:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-st.caption(
-    "The workbook may recalculate formulas when it is first opened in Microsoft Excel."
-)
 st.caption("made by Bronek xoxo")
