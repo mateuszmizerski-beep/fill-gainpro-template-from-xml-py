@@ -46,6 +46,11 @@ st.write(
     "Upload up to 5 XML files for annual reports from KRS. "
     "Order and file names do not matter."
 )
+st.warning(
+    'Use normal XML files only. Files ending in ".xml.xades" will not work. '
+    'If KRS provides an .xades file, select "Pobierz treść dokumentu" '
+    "to download the normal XML file."
+)
 
 with st.form("xml_upload_form"):
     xml_files = st.file_uploader(
@@ -143,3 +148,4 @@ if submitted:
     )
 
 st.caption("made by Bronek xoxo")
+st.caption("Questions? Message me on Slack.")
