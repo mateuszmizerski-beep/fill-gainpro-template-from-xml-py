@@ -14,157 +14,12 @@ MAX_FILE_SIZE_MB = 25
 
 st.set_page_config(
     page_title="Gain Financials XML Extractor",
-    layout="centered",
 )
 
-st.markdown(
-    """
-    <style>
-        .stApp {
-            background: var(--background-color);
-        }
-
-        .block-container {
-            max-width: 760px;
-            padding-top: 4.5rem;
-            padding-bottom: 3.5rem;
-        }
-
-        .extractor-header {
-            margin-bottom: 2rem;
-        }
-
-        .extractor-label {
-            color: var(--primary-color);
-            font-size: 0.75rem;
-            font-weight: 700;
-            letter-spacing: 0.12em;
-            margin-bottom: 0.65rem;
-            text-transform: uppercase;
-        }
-
-        .extractor-title {
-            color: var(--text-color) !important;
-            font-size: 2.55rem;
-            font-weight: 650;
-            letter-spacing: -0.045em;
-            line-height: 1.14;
-            margin: 0 0 0.75rem;
-        }
-
-        .extractor-description {
-            color: color-mix(in srgb, var(--text-color) 72%, transparent);
-            font-size: 1.02rem;
-            line-height: 1.55;
-            margin: 0;
-            max-width: 650px;
-        }
-
-        [data-testid="stFileUploader"] {
-            margin-top: 0.25rem;
-        }
-
-        [data-testid="stFileUploader"] section {
-            background: var(--secondary-background-color);
-            border: 1px dashed color-mix(in srgb, var(--text-color) 34%, transparent);
-            border-radius: 12px;
-            padding: 0.55rem;
-        }
-
-        [data-testid="stFileUploader"] section:hover {
-            border-color: var(--primary-color);
-        }
-
-        [data-testid="stFileUploader"] label p {
-            color: var(--text-color) !important;
-            font-weight: 600;
-        }
-
-        [data-testid="stFileUploaderDropzoneInstructions"] span {
-            color: var(--text-color) !important;
-        }
-
-        [data-testid="stFileUploaderDropzoneInstructions"] small {
-            color: color-mix(in srgb, var(--text-color) 65%, transparent) !important;
-        }
-
-        [data-testid="stFileUploader"] button {
-            background: var(--background-color);
-            border: 1px solid color-mix(in srgb, var(--text-color) 22%, transparent);
-            color: var(--text-color);
-        }
-
-        [data-testid="stFileUploader"] button:hover {
-            background: color-mix(in srgb, var(--secondary-background-color) 80%, var(--primary-color));
-            border-color: var(--primary-color);
-            color: var(--text-color);
-        }
-
-        [data-testid="stExpander"] {
-            background: var(--secondary-background-color);
-            border: 1px solid color-mix(in srgb, var(--text-color) 16%, transparent);
-            border-radius: 10px;
-            margin: 0.8rem 0 1.3rem;
-        }
-
-        [data-testid="stExpander"] summary p,
-        [data-testid="stExpander"] summary span {
-            color: var(--text-color) !important;
-        }
-
-        [data-testid="stFormSubmitButton"],
-        [data-testid="stDownloadButton"] {
-            width: 100%;
-        }
-
-        [data-testid="stFormSubmitButton"] button,
-        [data-testid="stDownloadButton"] button {
-            background: var(--primary-color);
-            border: 1px solid var(--primary-color);
-            border-radius: 9px;
-            color: #ffffff;
-            font-weight: 600;
-            min-height: 2.8rem;
-            width: 100%;
-        }
-
-        [data-testid="stFormSubmitButton"] button:hover,
-        [data-testid="stDownloadButton"] button:hover {
-            filter: brightness(0.92);
-            color: #ffffff;
-        }
-
-        .result-note {
-            background: var(--secondary-background-color);
-            border: 1px solid color-mix(in srgb, var(--text-color) 16%, transparent);
-            border-radius: 10px;
-            color: color-mix(in srgb, var(--text-color) 72%, transparent);
-            font-size: 0.9rem;
-            line-height: 1.5;
-            margin-top: 1.25rem;
-            padding: 0.8rem 1rem;
-        }
-
-        [data-testid="stCaptionContainer"] {
-            color: color-mix(in srgb, var(--text-color) 60%, transparent);
-            margin-top: 1.2rem;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    """
-    <div class="extractor-header">
-        <div class="extractor-label">Financials processing</div>
-        <h1 class="extractor-title">Gain Financials XML Extractor</h1>
-        <p class="extractor-description">
-            Upload up to 5 XML files for annual reports from KRS. Order and file names do not matter.
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
+st.title("Gain Financials XML Extractor")
+st.write(
+    "Upload up to 5 XML files for annual reports from KRS. "
+    "Order and file names do not matter."
 )
 
 with st.form("xml_upload_form"):
@@ -255,16 +110,10 @@ if submitted:
     st.success("Your filled Excel workbook is ready.")
 
     st.download_button(
-        label="Download filled Excel workbook",
+        label="Download Filled Excel Workbook",
         data=result,
         file_name="Filled_Financials.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-
-    st.markdown(
-        '<div class="result-note">The generated workbook is available only for '
-        "this session. Download it before closing this page.</div>",
-        unsafe_allow_html=True,
     )
 
 st.caption(
