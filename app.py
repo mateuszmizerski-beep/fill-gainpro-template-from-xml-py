@@ -1,14 +1,18 @@
+import importlib
 from pathlib import Path
 import re
 import tempfile
 
 import streamlit as st
 
-from fill_gainpro_template_from_xml import (
-    XmlFinancials,
-    build_fill_jobs,
-    main as fill_template,
-)
+import fill_gainpro_template_from_xml as extractor
+
+
+# Streamlit may rerun this file without refreshing an already-imported helper module.
+extractor = importlib.reload(extractor)
+XmlFinancials = extractor.XmlFinancials
+build_fill_jobs = extractor.build_fill_jobs
+fill_template = extractor.main
 
 
 APP_DIR = Path(__file__).parent
