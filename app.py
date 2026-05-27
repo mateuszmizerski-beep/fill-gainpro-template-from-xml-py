@@ -21,7 +21,7 @@ st.markdown(
     """
     <style>
         .stApp {
-            background: #f6f8fb;
+            background: var(--background-color);
         }
 
         .block-container {
@@ -35,7 +35,7 @@ st.markdown(
         }
 
         .extractor-label {
-            color: #426181;
+            color: var(--primary-color);
             font-size: 0.75rem;
             font-weight: 700;
             letter-spacing: 0.12em;
@@ -44,7 +44,7 @@ st.markdown(
         }
 
         .extractor-title {
-            color: #142638 !important;
+            color: var(--text-color) !important;
             font-size: 2.55rem;
             font-weight: 650;
             letter-spacing: -0.045em;
@@ -53,7 +53,7 @@ st.markdown(
         }
 
         .extractor-description {
-            color: #526477;
+            color: color-mix(in srgb, var(--text-color) 72%, transparent);
             font-size: 1.02rem;
             line-height: 1.55;
             margin: 0;
@@ -65,55 +65,51 @@ st.markdown(
         }
 
         [data-testid="stFileUploader"] section {
-            background: #ffffff;
-            border: 1px dashed #aebdcd;
+            background: var(--secondary-background-color);
+            border: 1px dashed color-mix(in srgb, var(--text-color) 34%, transparent);
             border-radius: 12px;
             padding: 0.55rem;
         }
 
         [data-testid="stFileUploader"] section:hover {
-            border-color: #496f96;
+            border-color: var(--primary-color);
         }
 
         [data-testid="stFileUploader"] label p {
-            color: #263b50 !important;
+            color: var(--text-color) !important;
             font-weight: 600;
         }
 
         [data-testid="stFileUploaderDropzoneInstructions"] span {
-            color: #263b50 !important;
+            color: var(--text-color) !important;
         }
 
         [data-testid="stFileUploaderDropzoneInstructions"] small {
-            color: #637588 !important;
+            color: color-mix(in srgb, var(--text-color) 65%, transparent) !important;
         }
 
         [data-testid="stFileUploader"] button {
-            background: #ffffff;
-            border: 1px solid #c9d5e1;
-            color: #183b5d;
+            background: var(--background-color);
+            border: 1px solid color-mix(in srgb, var(--text-color) 22%, transparent);
+            color: var(--text-color);
         }
 
         [data-testid="stFileUploader"] button:hover {
-            background: #f1f5f9;
-            border-color: #8da3ba;
-            color: #183b5d;
+            background: color-mix(in srgb, var(--secondary-background-color) 80%, var(--primary-color));
+            border-color: var(--primary-color);
+            color: var(--text-color);
         }
 
         [data-testid="stExpander"] {
-            background: #ffffff;
-            border: 1px solid #e1e7ef;
+            background: var(--secondary-background-color);
+            border: 1px solid color-mix(in srgb, var(--text-color) 16%, transparent);
             border-radius: 10px;
             margin: 0.8rem 0 1.3rem;
         }
 
         [data-testid="stExpander"] summary p,
         [data-testid="stExpander"] summary span {
-            color: #263b50 !important;
-        }
-
-        [data-testid="stExpander"] [data-testid="stCheckbox"] p {
-            color: #263b50 !important;
+            color: var(--text-color) !important;
         }
 
         [data-testid="stFormSubmitButton"],
@@ -123,8 +119,8 @@ st.markdown(
 
         [data-testid="stFormSubmitButton"] button,
         [data-testid="stDownloadButton"] button {
-            background: #183b5d;
-            border: 1px solid #183b5d;
+            background: var(--primary-color);
+            border: 1px solid var(--primary-color);
             border-radius: 9px;
             color: #ffffff;
             font-weight: 600;
@@ -134,16 +130,15 @@ st.markdown(
 
         [data-testid="stFormSubmitButton"] button:hover,
         [data-testid="stDownloadButton"] button:hover {
-            background: #244f77;
-            border-color: #244f77;
+            filter: brightness(0.92);
             color: #ffffff;
         }
 
         .result-note {
-            background: #ffffff;
-            border: 1px solid #dbe4ee;
+            background: var(--secondary-background-color);
+            border: 1px solid color-mix(in srgb, var(--text-color) 16%, transparent);
             border-radius: 10px;
-            color: #526477;
+            color: color-mix(in srgb, var(--text-color) 72%, transparent);
             font-size: 0.9rem;
             line-height: 1.5;
             margin-top: 1.25rem;
@@ -151,7 +146,7 @@ st.markdown(
         }
 
         [data-testid="stCaptionContainer"] {
-            color: #6c7a89;
+            color: color-mix(in srgb, var(--text-color) 60%, transparent);
             margin-top: 1.2rem;
         }
     </style>
@@ -165,7 +160,7 @@ st.markdown(
         <div class="extractor-label">Financials processing</div>
         <h1 class="extractor-title">Gain Financials XML Extractor</h1>
         <p class="extractor-description">
-            Upload XML files for annual reports from KRS. Order and file names do not matter.
+            Upload up to 5 XML files for annual reports from KRS. Order and file names do not matter.
         </p>
     </div>
     """,
@@ -177,17 +172,12 @@ with st.form("xml_upload_form"):
         "XML annual report files",
         type=["xml"],
         accept_multiple_files=True,
-        help="Upload up to five XML files for the same company.",
     )
 
     with st.expander("Advanced settings"):
         skip_single_xml_comparative = st.checkbox(
             "Do not fill the previous-year comparative figures when uploading one XML",
             value=False,
-            help=(
-                "Normally, one annual report XML contains both the reporting year "
-                "and its comparative previous-year figures."
-            ),
         )
 
     submitted = st.form_submit_button("Generate Excel")
