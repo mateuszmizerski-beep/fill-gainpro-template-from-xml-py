@@ -110,7 +110,7 @@ if submitted:
             if len(xml_paths) == 1:
                 years_to_fill = "2" if should_fill_comparative else "1"
             else:
-                years_to_fill = "5"
+                years_to_fill = str(len(xml_paths) + 1)
 
             args = [
                 "--xml",

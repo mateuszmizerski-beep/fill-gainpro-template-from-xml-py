@@ -711,8 +711,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--years",
         type=int,
-        default=5,
-        help="Maximum number of fiscal years to fill when multiple XMLs are provided. Default: 5.",
+        default=6,
+        help="Maximum number of fiscal years to fill when multiple XMLs are provided. Default: 6.",
     )
     parser.add_argument(
         "--no-overwrite",
