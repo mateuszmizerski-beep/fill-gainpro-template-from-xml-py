@@ -36,9 +36,10 @@ CURRENT_PERIOD_TAG = "KwotaA"
 CAGR_COLUMN = 21  # Column U
 MIN_ANNUALISATION_DAYS = 90
 FULL_YEAR_DAY_COUNTS = {365, 366}
+TRANSFORMED_COMPARATIVE_TAG = "KwotaB1"
 # In three-column ESF files, the far-right comparative column is KwotaB1.
-# If an XML has only one comparative column, fall back to KwotaB.
-COMPARATIVE_PERIOD_TAGS = ("KwotaB1", "KwotaB")
+# If KwotaB1 is missing or is an all-zero transformed column, fall back to KwotaB.
+COMPARATIVE_PERIOD_TAGS = (TRANSFORMED_COMPARATIVE_TAG, "KwotaB")
 AMOUNT_TAGS = {"KwotaA", "KwotaB", "KwotaB1"}
 PRESERVED_COLUMNS = {1, 2, 3, 4, 20, 21}  # A:D, T:U
 STATEMENT_ROOT_TAGS = {
@@ -240,6 +241,20 @@ class XmlFinancials:
             self.period_days is not None
             and self.period_days > MIN_ANNUALISATION_DAYS
             and self.period_days not in FULL_YEAR_DAY_COUNTS
+        )
+
+    @property
+    def comparative_period_tags(self) -> tuple[str, ...]:
+        if self.has_nonzero_amount(TRANSFORMED_COMPARATIVE_TAG):
+            return COMPARATIVE_PERIOD_TAGS
+        return ("KwotaB",)
+
+    def has_nonzero_amount(self, period_tag: str) -> bool:
+        return any(
+            value is not None and value != 0
+            for values in self.values.values()
+            for tag, value in values.items()
+            if tag == period_tag
         )
 
     def amount(
@@ -899,7 +914,7 @@ def build_fill_jobs(
         current_year = target_year or xml_data.year
         jobs = [FillJob(xml_data, current_year, (CURRENT_PERIOD_TAG,), xml_data)]
         if fill_comparative and years > 1:
-            jobs.append(FillJob(xml_data, current_year - 1, COMPARATIVE_PERIOD_TAGS))
+            jobs.append(FillJob(xml_data, current_year - 1, xml_data.comparative_period_tags))
         return jobs[:years]
 
     if target_year is not None:
@@ -914,10 +929,10 @@ def build_fill_jobs(
         planned = (
             (
                 (xml_data.year, (CURRENT_PERIOD_TAG,)),
-                (xml_data.year - 1, COMPARATIVE_PERIOD_TAGS),
+                (xml_data.year - 1, xml_data.comparative_period_tags),
             )
             if index == 0
-            else ((xml_data.year - 1, COMPARATIVE_PERIOD_TAGS),)
+            else ((xml_data.year - 1, xml_data.comparative_period_tags),)
         )
         for year, period_tags in planned:
             if year in seen_years:
@@ -943,7 +958,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "Input ESF XML file(s). With multiple XMLs, pass the recent annual filings; "
             "the script sorts them by fiscal year, uses the newest XML's current year "
             "from KwotaA and comparative years from KwotaB1 when present, falling back "
-            "to KwotaB."
+            "to KwotaB when KwotaB1 is missing or all zeros."
         ),
     )
     parser.add_argument("--template", required=True, type=Path, help="Input Excel template/workbook.")
@@ -958,7 +973,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help=(
             "For a single XML, also fill the previous-year column from KwotaB1 when "
-            "present, falling back to KwotaB."
+            "present, falling back to KwotaB when KwotaB1 is missing or all zeros."
         ),
     )
     parser.add_argument(
