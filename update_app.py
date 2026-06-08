@@ -14,7 +14,6 @@ extractor = importlib.reload(extractor)
 updater = importlib.reload(updater)
 
 XmlFinancials = extractor.XmlFinancials
-build_fill_jobs = extractor.build_fill_jobs
 update_workbook = updater.update_workbook
 
 
@@ -66,17 +65,21 @@ def safe_uploaded_filename(file_name: str, fallback: str) -> str:
     return safe_name or fallback
 
 
-def planned_update_jobs(xml_paths: list[Path], existing_years: list[int]):
-    xml_files = [XmlFinancials(path) for path in xml_paths]
-    newest_xml_year = max(xml_data.year for xml_data in xml_files)
-    latest_existing_year = max(existing_years) if existing_years else newest_xml_year - 1
-    fill_year_count = max(2, newest_xml_year - latest_existing_year)
-    return build_fill_jobs(
-        xml_files,
-        target_year=None,
-        fill_comparative=True,
-        years=fill_year_count,
-    )
+def company_name_mismatches(existing_file_name: str, xml_data_files: list[XmlFinancials]) -> list[str]:
+    filename_tokens = updater.company_tokens(Path(existing_file_name).stem)
+    if not filename_tokens:
+        return []
+
+    mismatches: list[str] = []
+    for xml_data in xml_data_files:
+        xml_tokens = updater.company_tokens(xml_data.company or "")
+        if xml_tokens and filename_tokens.isdisjoint(xml_tokens):
+            mismatches.append(
+                f"Excel file: {existing_file_name}; "
+                f"XML file: {xml_data.xml_path.name}; "
+                f"XML company: {xml_data.company or 'n/a'}"
+            )
+    return mismatches
 
 
 st.set_page_config(
@@ -111,12 +114,6 @@ with st.form("update_upload_form"):
         type=["xml"],
         accept_multiple_files=True,
     )
-
-    with st.expander("Advanced settings"):
-        allow_company_mismatch = st.checkbox(
-            "Allow XML company name to differ from the Excel file name",
-            value=False,
-        )
 
     submitted = st.form_submit_button("Generate Updated Excel")
 
@@ -168,22 +165,23 @@ if submitted:
             output_path = tmpdir_path / "Updated_Financials.xlsx"
 
             try:
-                existing_wb = updater.load_workbook(existing_path, read_only=True, data_only=False)
-                existing_ws = existing_wb[updater.FINANCIALS_SHEET]
-                existing_years = updater.active_years(existing_ws)
-                planned_jobs = planned_update_jobs(xml_paths, existing_years)
-                annualised_jobs = [
-                    job
-                    for job in planned_jobs
-                    if job.period_xml_data and job.period_xml_data.requires_annualisation
+                xml_data_files = [XmlFinancials(path) for path in xml_paths]
+                annualised_xmls = [
+                    xml_data
+                    for xml_data in xml_data_files
+                    if xml_data.requires_annualisation
                 ]
+                name_mismatches = company_name_mismatches(
+                    existing_excel.name,
+                    xml_data_files,
+                )
 
                 update_workbook(
                     existing_path,
                     TEMPLATE_PATH,
                     xml_paths,
                     output_path,
-                    allow_company_mismatch=allow_company_mismatch,
+                    allow_company_mismatch=True,
                 )
                 download_filename = output_filename(xml_paths, existing_excel.name)
             except SystemExit as exc:
@@ -195,14 +193,22 @@ if submitted:
 
             result = output_path.read_bytes()
 
-    if annualised_jobs:
+    if name_mismatches:
+        st.warning(
+            "Possible company name mismatch detected. The workbook was still "
+            "generated, but please confirm that the Excel and XML files belong "
+            "to the same company.\n\n"
+            + "\n\n".join(name_mismatches)
+        )
+
+    if annualised_xmls:
         periods = ", ".join(
             (
-                f"FY{job.year} "
-                f"({job.period_xml_data.period_start_date:%d-%m-%Y} to "
-                f"{job.period_xml_data.period_end_date:%d-%m-%Y})"
+                f"FY{xml_data.year} "
+                f"({xml_data.period_start_date:%d-%m-%Y} to "
+                f"{xml_data.period_end_date:%d-%m-%Y})"
             )
-            for job in annualised_jobs
+            for xml_data in annualised_xmls
         )
         st.warning(
             f"Annualisation detected for {periods}. The workbook has been generated "
