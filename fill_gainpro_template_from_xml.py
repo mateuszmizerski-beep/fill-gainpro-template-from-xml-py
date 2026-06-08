@@ -85,7 +85,7 @@ MAPPINGS: tuple[Mapping, ...] = (
     ),
     Mapping(
         "D&A",
-        ("RachPrzeplywow/PrzeplywyPosr/A/A_II/A_II_1",),
+        ("RachPrzeplywow/PrzeplywyPosr/A/A_II/A_II_1", "RZiS/RZiSPor/B/B_I"),
         "1. REPORTED FIGURES",
         "2. ADJUSTMENTS ",
         confidence_label="EBITDA",
