@@ -47,6 +47,7 @@ STATEMENT_ROOT_TAGS = {
     "JednostkaMala",
     "JednostkaMikro",
     "JednostkaOp",
+    "SkonsolidowanaJednostkaInna",
 }
 STATEMENT_SECTION_TAGS = {"Bilans", "RZiS", "RachPrzeplywow"}
 
@@ -62,6 +63,7 @@ class Mapping:
     confidence_label: str | None = None
     scale: Decimal = PLN_TO_PLNM
     blank_if_zero: bool = True
+    consolidated_xml_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -130,6 +132,10 @@ MAPPINGS: tuple[Mapping, ...] = (
         "1. REPORTED FIGURES",
         "2. ADJUSTMENTS ",
         confidence_label="Payables",
+        consolidated_xml_paths=(
+            "Bilans/Pasywa/Pasywa_D/Pasywa_D_III/Pasywa_D_III_3/Pasywa_D_III_3_D",
+            "Bilans/Pasywa/Pasywa_D/Pasywa_D_III/Pasywa_D_III_3/Pasywa_D_III_3_D/Pasywa_D_III_3_D_1",
+        ),
     ),
     Mapping(
         "Cash and cash equivalents",
@@ -141,6 +147,12 @@ MAPPINGS: tuple[Mapping, ...] = (
         "1. REPORTED FIGURES",
         "2. ADJUSTMENTS ",
         confidence_label="Cash & cash equivalents",
+        consolidated_xml_paths=(
+            "Bilans/Aktywa/Aktywa_B/Aktywa_B_III/Aktywa_B_III_1/Aktywa_B_III_1_D",
+            "Bilans/Aktywa/Aktywa_B/Aktywa_B_III/Aktywa_B_III_1/Aktywa_B_III_1_D/Aktywa_B_III_1_D_1",
+            "Bilans/Aktywa/Aktywa_B/Aktywa_B_III",
+            "RachPrzeplywow/PrzeplywyPosr/G",
+        ),
     ),
     Mapping(
         "CAPEX",
@@ -156,6 +168,9 @@ MAPPINGS: tuple[Mapping, ...] = (
         "Interest bearing debt / gross debt",
         "Net revenue",
         confidence_label="Interest-bearing debt",
+        consolidated_xml_paths=(
+            "Bilans/Pasywa/Pasywa_D/Pasywa_D_II/Pasywa_D_II_3/Pasywa_D_II_3_A",
+        ),
     ),
     Mapping(
         "Other financial liabilities - LT",
@@ -163,6 +178,9 @@ MAPPINGS: tuple[Mapping, ...] = (
         "Interest bearing debt / gross debt",
         "Net revenue",
         confidence_label="Interest-bearing debt",
+        consolidated_xml_paths=(
+            "Bilans/Pasywa/Pasywa_D/Pasywa_D_II/Pasywa_D_II_3/Pasywa_D_II_3_C",
+        ),
     ),
     Mapping(
         "Credits and loans - ST",
@@ -170,6 +188,9 @@ MAPPINGS: tuple[Mapping, ...] = (
         "Interest bearing debt / gross debt",
         "Net revenue",
         confidence_label="Interest-bearing debt",
+        consolidated_xml_paths=(
+            "Bilans/Pasywa/Pasywa_D/Pasywa_D_III/Pasywa_D_III_3/Pasywa_D_III_3_A",
+        ),
     ),
     Mapping(
         "Other financial liabilities - ST",
@@ -177,6 +198,9 @@ MAPPINGS: tuple[Mapping, ...] = (
         "Interest bearing debt / gross debt",
         "Net revenue",
         confidence_label="Interest-bearing debt",
+        consolidated_xml_paths=(
+            "Bilans/Pasywa/Pasywa_D/Pasywa_D_III/Pasywa_D_III_3/Pasywa_D_III_3_C",
+        ),
     ),
     # Scratchpad revenue split
     Mapping(
@@ -213,6 +237,7 @@ class XmlFinancials:
         self.period_end = self._first_text("OkresDo")
         self.period_start = self._first_text("OkresOd")
         self.company = self._first_text("NazwaFirmy")
+        self._statement_element = self._statement_root()
         self._index_amounts()
 
     @property
@@ -244,6 +269,10 @@ class XmlFinancials:
         )
 
     @property
+    def is_consolidated(self) -> bool:
+        return local_name(self._statement_element.tag).startswith("Skonsolidowana")
+
+    @property
     def comparative_period_tags(self) -> tuple[str, ...]:
         if self.has_nonzero_amount(TRANSFORMED_COMPARATIVE_TAG):
             return COMPARATIVE_PERIOD_TAGS
@@ -269,7 +298,7 @@ class XmlFinancials:
         return None, None, None
 
     def _index_amounts(self) -> None:
-        statement_root = self._statement_root()
+        statement_root = self._statement_element
 
         def walk(element: ET.Element, parents: list[str]) -> None:
             name = local_name(element.tag)
@@ -787,7 +816,12 @@ def fill_period(
             else row
         )
         cell = ws.cell(row=input_row, column=col)
-        raw_value, xml_path, period_tag = xml_data.amount(mapping.xml_paths, period_tags)
+        mapping_paths = (
+            mapping.consolidated_xml_paths
+            if xml_data.is_consolidated and mapping.consolidated_xml_paths
+            else mapping.xml_paths
+        )
+        raw_value, xml_path, period_tag = xml_data.amount(mapping_paths, period_tags)
 
         if raw_value is None or xml_path is None or period_tag is None:
             messages.append(f"MISS {col_letter}{input_row} {mapping.row_label}: no XML value found")
