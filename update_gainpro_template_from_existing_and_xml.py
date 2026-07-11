@@ -297,6 +297,58 @@ def should_copy_financials_cell(source: Cell) -> bool:
     return source.value not in (None, "") or source.comment is not None or source.has_style
 
 
+def unique_label_row(ws: Worksheet, *labels: str) -> int | None:
+    label_norms = {normalize(label) for label in labels}
+    matches = [
+        row
+        for row in range(1, ws.max_row + 1)
+        if normalize(source_row_label(ws, row)) in label_norms
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def revenue_migration_rows(
+    source_ws: Worksheet,
+    destination_ws: Worksheet,
+) -> tuple[dict[int, int], int | None, int, int] | None:
+    source_products = unique_label_row(source_ws, "Sales of products")
+    source_goods = unique_label_row(source_ws, "Sales of goods and materials")
+    destination_products = unique_label_row(
+        destination_ws, "Sales of products", "[Line 1]"
+    )
+    destination_goods = unique_label_row(
+        destination_ws, "Sales of goods and materials", "[Line 2]"
+    )
+    if None in (
+        source_products,
+        source_goods,
+        destination_products,
+        destination_goods,
+    ):
+        return None
+
+    source_total = first_label_after(source_ws, "Total", source_goods)
+    destination_total = first_label_after(destination_ws, "Total", destination_goods)
+    if destination_total is None:
+        return None
+
+    source_reported_revenue = find_row(
+        source_ws, "Net revenue", "1. REPORTED FIGURES", "2. ADJUSTMENTS "
+    )
+    destination_reported_revenue = find_row(
+        destination_ws, "Net revenue", "1. REPORTED FIGURES", "2. ADJUSTMENTS "
+    )
+    return (
+        {
+            source_products: destination_products,
+            source_goods: destination_goods,
+        },
+        source_total,
+        source_reported_revenue,
+        destination_reported_revenue,
+    )
+
+
 def migrate_financials_columns(
     source_ws: Worksheet,
     destination_ws: Worksheet,
@@ -308,6 +360,21 @@ def migrate_financials_columns(
     destination_contexts = context_ranges(destination_ws)
     destination_row_cache: dict[int, int | None] = {}
     messages: list[str] = []
+    revenue_rows = revenue_migration_rows(source_ws, destination_ws)
+    revenue_component_rows: dict[int, int] = {}
+    source_revenue_total: int | None = None
+    source_reported_revenue: int | None = None
+    destination_reported_revenue: int | None = None
+    if revenue_rows:
+        (
+            revenue_component_rows,
+            source_revenue_total,
+            source_reported_revenue,
+            destination_reported_revenue,
+        ) = revenue_rows
+        destination_rows = list(revenue_component_rows.values())
+        destination_ws.cell(destination_rows[0], 4).value = "Sales of products"
+        destination_ws.cell(destination_rows[1], 4).value = "Sales of goods and materials"
 
     for year in years:
         if year not in source_year_columns or year not in destination_year_columns:
@@ -319,6 +386,8 @@ def migrate_financials_columns(
         copied = 0
 
         for row in range(1, source_ws.max_row + 1):
+            if row in revenue_component_rows or row == source_revenue_total:
+                continue
             source_cell = source_ws.cell(row=row, column=source_col)
             if not should_copy_financials_cell(source_cell):
                 continue
@@ -334,6 +403,36 @@ def migrate_financials_columns(
             destination_cell = destination_ws.cell(row=destination_row, column=destination_col)
             copy_cell(source_cell, destination_cell, copy_formula=False)
             copied += 1
+
+        if revenue_rows:
+            destination_component_rows = list(revenue_component_rows.values())
+            for source_row, destination_row in revenue_component_rows.items():
+                source_cell = source_ws.cell(row=source_row, column=source_col)
+                if should_copy_financials_cell(source_cell):
+                    destination_cell = destination_ws.cell(
+                        row=destination_row, column=destination_col
+                    )
+                    copy_cell(source_cell, destination_cell, copy_formula=False)
+                    copied += 1
+
+            destination_total = first_label_after(
+                destination_ws, "Total", max(destination_component_rows)
+            )
+            col_letter = get_column_letter(destination_col)
+            if destination_total is not None:
+                destination_ws.cell(destination_total, destination_col).value = (
+                    f"=SUM({col_letter}{destination_component_rows[0]}:"
+                    f"{col_letter}{destination_component_rows[1]})"
+                )
+                reported_cell = destination_ws.cell(
+                    destination_reported_revenue, destination_col
+                )
+                source_reported_cell = source_ws.cell(
+                    source_reported_revenue, source_col
+                )
+                copy_cell_style_and_metadata(source_reported_cell, reported_cell)
+                reported_cell.value = f"={col_letter}{destination_total}"
+                reported_cell.comment = None
 
         messages.append(
             f"COPY Financials {year}: {get_column_letter(source_col)} -> "
