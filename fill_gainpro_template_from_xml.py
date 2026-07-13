@@ -63,6 +63,7 @@ class Mapping:
     confidence_label: str | None = None
     scale: Decimal = PLN_TO_PLNM
     blank_if_zero: bool = True
+    absolute_value: bool = False
     consolidated_xml_paths: tuple[str, ...] = ()
 
 
@@ -87,10 +88,15 @@ MAPPINGS: tuple[Mapping, ...] = (
     ),
     Mapping(
         "D&A",
-        ("RachPrzeplywow/PrzeplywyPosr/A/A_II/A_II_1", "RZiS/RZiSPor/B/B_I"),
+        ("RZiS/RZiSPor/B/B_I", "RachPrzeplywow/PrzeplywyPosr/A/A_II/A_II_1"),
         "1. REPORTED FIGURES",
         "2. ADJUSTMENTS ",
         confidence_label="EBITDA",
+        absolute_value=True,
+        consolidated_xml_paths=(
+            "RZiS/RZiSPor/B/B_I",
+            "RachPrzeplywow/PrzeplywyPosr/A/A_II/A_II_3",
+        ),
     ),
     Mapping(
         "Fixed assets",
@@ -160,6 +166,7 @@ MAPPINGS: tuple[Mapping, ...] = (
         "1. REPORTED FIGURES",
         "2. ADJUSTMENTS ",
         confidence_label="CAPEX",
+        absolute_value=True,
     ),
     # Scratchpad debt split
     Mapping(
@@ -830,7 +837,10 @@ def fill_period(
         if mapping.confidence_label:
             confidence_labels.add(mapping.confidence_label)
 
-        value = scaled_excel_value(raw_value, mapping.scale, mapping.blank_if_zero)
+        normalized_raw_value = abs(raw_value) if mapping.absolute_value else raw_value
+        value = scaled_excel_value(
+            normalized_raw_value, mapping.scale, mapping.blank_if_zero
+        )
         if not overwrite and not cell_is_empty(cell):
             messages.append(f"SKIP {col_letter}{row} {mapping.row_label}: cell already populated")
             continue
