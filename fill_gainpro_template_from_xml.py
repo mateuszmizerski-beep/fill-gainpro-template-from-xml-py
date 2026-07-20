@@ -64,6 +64,7 @@ class Mapping:
     scale: Decimal = PLN_TO_PLNM
     blank_if_zero: bool = True
     absolute_value: bool = False
+    small_xml_paths: tuple[str, ...] = ()
     consolidated_xml_paths: tuple[str, ...] = ()
 
 
@@ -128,6 +129,10 @@ MAPPINGS: tuple[Mapping, ...] = (
         "1. REPORTED FIGURES",
         "2. ADJUSTMENTS ",
         confidence_label="Receivables",
+        small_xml_paths=(
+            "Bilans/Aktywa/Aktywa_B/Aktywa_B_II/Aktywa_B_II_A",
+            "Bilans/Aktywa/Aktywa_B/Aktywa_B_II/Aktywa_B_II_A/Aktywa_B_II_A_1",
+        ),
     ),
     Mapping(
         "Trade creditors / payables",
@@ -138,6 +143,10 @@ MAPPINGS: tuple[Mapping, ...] = (
         "1. REPORTED FIGURES",
         "2. ADJUSTMENTS ",
         confidence_label="Payables",
+        small_xml_paths=(
+            "Bilans/Pasywa/Pasywa_B/Pasywa_B_III/Pasywa_B_III_B",
+            "Bilans/Pasywa/Pasywa_B/Pasywa_B_III/Pasywa_B_III_B/Pasywa_B_III_B_1",
+        ),
         consolidated_xml_paths=(
             "Bilans/Pasywa/Pasywa_D/Pasywa_D_III/Pasywa_D_III_3/Pasywa_D_III_3_D",
             "Bilans/Pasywa/Pasywa_D/Pasywa_D_III/Pasywa_D_III_3/Pasywa_D_III_3_D/Pasywa_D_III_3_D_1",
@@ -175,6 +184,9 @@ MAPPINGS: tuple[Mapping, ...] = (
         "Interest bearing debt / gross debt",
         "Net revenue",
         confidence_label="Interest-bearing debt",
+        small_xml_paths=(
+            "Bilans/Pasywa/Pasywa_B/Pasywa_B_II/Pasywa_B_II_1",
+        ),
         consolidated_xml_paths=(
             "Bilans/Pasywa/Pasywa_D/Pasywa_D_II/Pasywa_D_II_3/Pasywa_D_II_3_A",
         ),
@@ -195,6 +207,9 @@ MAPPINGS: tuple[Mapping, ...] = (
         "Interest bearing debt / gross debt",
         "Net revenue",
         confidence_label="Interest-bearing debt",
+        small_xml_paths=(
+            "Bilans/Pasywa/Pasywa_B/Pasywa_B_III/Pasywa_B_III_A",
+        ),
         consolidated_xml_paths=(
             "Bilans/Pasywa/Pasywa_D/Pasywa_D_III/Pasywa_D_III_3/Pasywa_D_III_3_A",
         ),
@@ -280,6 +295,13 @@ class XmlFinancials:
         return local_name(self._statement_element.tag).startswith("Skonsolidowana")
 
     @property
+    def is_small(self) -> bool:
+        return any(
+            local_name(child.tag).startswith(("BilansJednostkaMala", "RZiSJednostkaMala"))
+            for child in list(self._statement_element)
+        )
+
+    @property
     def comparative_period_tags(self) -> tuple[str, ...]:
         if self.has_nonzero_amount(TRANSFORMED_COMPARATIVE_TAG):
             return COMPARATIVE_PERIOD_TAGS
@@ -308,7 +330,7 @@ class XmlFinancials:
         statement_root = self._statement_element
 
         def walk(element: ET.Element, parents: list[str]) -> None:
-            name = local_name(element.tag)
+            name = canonical_statement_section_name(local_name(element.tag))
             path = "/".join(parents + [name]) if parents else name
             direct_values: dict[str, Decimal] = {}
             for child in list(element):
@@ -348,7 +370,10 @@ class XmlFinancials:
 
     @staticmethod
     def _has_statement_sections(element: ET.Element) -> bool:
-        return any(local_name(child.tag) in STATEMENT_SECTION_TAGS for child in list(element))
+        return any(
+            canonical_statement_section_name(local_name(child.tag)) in STATEMENT_SECTION_TAGS
+            for child in list(element)
+        )
 
     def _first_text(self, tag_name: str) -> str | None:
         for element in self.root.iter():
@@ -359,6 +384,13 @@ class XmlFinancials:
 
 def local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+def canonical_statement_section_name(name: str) -> str:
+    for section_name in STATEMENT_SECTION_TAGS:
+        if name == section_name or name.startswith(f"{section_name}Jednostka"):
+            return section_name
+    return name
 
 
 def normalize(value: object) -> str:
@@ -823,11 +855,12 @@ def fill_period(
             else row
         )
         cell = ws.cell(row=input_row, column=col)
-        mapping_paths = (
-            mapping.consolidated_xml_paths
-            if xml_data.is_consolidated and mapping.consolidated_xml_paths
-            else mapping.xml_paths
-        )
+        if xml_data.is_consolidated and mapping.consolidated_xml_paths:
+            mapping_paths = mapping.consolidated_xml_paths
+        elif xml_data.is_small and mapping.small_xml_paths:
+            mapping_paths = mapping.small_xml_paths
+        else:
+            mapping_paths = mapping.xml_paths
         raw_value, xml_path, period_tag = xml_data.amount(mapping_paths, period_tags)
 
         if raw_value is None or xml_path is None or period_tag is None:
@@ -958,33 +991,33 @@ def build_fill_jobs(
         current_year = target_year or xml_data.year
         jobs = [FillJob(xml_data, current_year, (CURRENT_PERIOD_TAG,), xml_data)]
         if fill_comparative and years > 1:
-            jobs.append(FillJob(xml_data, current_year - 1, xml_data.comparative_period_tags))
+            comparative_tags = xml_data.comparative_period_tags
+            if any(xml_data.has_nonzero_amount(tag) for tag in comparative_tags):
+                jobs.append(FillJob(xml_data, current_year - 1, comparative_tags))
         return jobs[:years]
 
     if target_year is not None:
         raise ValueError("--target-year is only supported when filling from one XML file.")
 
-    sorted_xmls = sorted(xml_files, key=lambda item: item.year, reverse=True)
-    period_xml_by_year = {xml_data.year: xml_data for xml_data in sorted_xmls}
+    xml_by_year = {xml_data.year: xml_data for xml_data in xml_files}
+    newest_year = max(xml_by_year)
+    oldest_possible_year = min(xml_by_year) - 1
     jobs: list[FillJob] = []
-    seen_years: set[int] = set()
 
-    for index, xml_data in enumerate(sorted_xmls):
-        planned = (
-            (
-                (xml_data.year, (CURRENT_PERIOD_TAG,)),
-                (xml_data.year - 1, xml_data.comparative_period_tags),
-            )
-            if index == 0
-            else ((xml_data.year - 1, xml_data.comparative_period_tags),)
-        )
-        for year, period_tags in planned:
-            if year in seen_years:
-                continue
-            jobs.append(FillJob(xml_data, year, period_tags, period_xml_by_year.get(year)))
-            seen_years.add(year)
-            if len(jobs) >= years:
-                return jobs
+    for year in range(newest_year, oldest_possible_year - 1, -1):
+        later_xml = xml_by_year.get(year + 1)
+        current_xml = xml_by_year.get(year)
+
+        if later_xml is not None:
+            comparative_tags = later_xml.comparative_period_tags
+            if any(later_xml.has_nonzero_amount(tag) for tag in comparative_tags):
+                jobs.append(FillJob(later_xml, year, comparative_tags, current_xml))
+        if (not jobs or jobs[-1].year != year) and current_xml is not None:
+            if current_xml.has_nonzero_amount(CURRENT_PERIOD_TAG):
+                jobs.append(FillJob(current_xml, year, (CURRENT_PERIOD_TAG,), current_xml))
+
+        if len(jobs) >= years:
+            return jobs
 
     return jobs
 
