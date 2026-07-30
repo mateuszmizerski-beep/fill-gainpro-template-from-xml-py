@@ -65,6 +65,7 @@ class Mapping:
     blank_if_zero: bool = True
     absolute_value: bool = False
     small_xml_paths: tuple[str, ...] = ()
+    micro_xml_paths: tuple[str, ...] = ()
     consolidated_xml_paths: tuple[str, ...] = ()
 
 
@@ -78,7 +79,13 @@ class FillJob:
 
 MAPPINGS: tuple[Mapping, ...] = (
     # Reported figures
-    Mapping("Other income", ("RZiS/RZiSKalk/G", "RZiS/RZiSPor/D"), "1. REPORTED FIGURES", "2. ADJUSTMENTS "),
+    Mapping(
+        "Other income",
+        ("RZiS/RZiSKalk/G", "RZiS/RZiSPor/D"),
+        "1. REPORTED FIGURES",
+        "2. ADJUSTMENTS ",
+        micro_xml_paths=("RZiS/C",),
+    ),
     Mapping("COGS", ("RZiS/RZiSKalk/B",), "1. REPORTED FIGURES", "2. ADJUSTMENTS ", confidence_label="Gross margin"),
     Mapping(
         "Reported EBIT",
@@ -94,6 +101,7 @@ MAPPINGS: tuple[Mapping, ...] = (
         "2. ADJUSTMENTS ",
         confidence_label="EBITDA",
         absolute_value=True,
+        micro_xml_paths=("RZiS/B/B_I",),
         consolidated_xml_paths=(
             "RZiS/RZiSPor/B/B_I",
             "RachPrzeplywow/PrzeplywyPosr/A/A_II/A_II_3",
@@ -233,6 +241,7 @@ MAPPINGS: tuple[Mapping, ...] = (
         row_label_fallbacks=("[Line 1]",),
         write_label="Sales of products",
         confidence_label="Revenue",
+        micro_xml_paths=("RZiS/A",),
     ),
     Mapping(
         "Sales of goods and materials",
@@ -302,6 +311,10 @@ class XmlFinancials:
         )
 
     @property
+    def is_micro(self) -> bool:
+        return local_name(self._statement_element.tag) == "JednostkaMikro"
+
+    @property
     def comparative_period_tags(self) -> tuple[str, ...]:
         if self.has_nonzero_amount(TRANSFORMED_COMPARATIVE_TAG):
             return COMPARATIVE_PERIOD_TAGS
@@ -324,6 +337,39 @@ class XmlFinancials:
                 value = values.get(period_tag)
                 if value is not None:
                     return value, path, period_tag
+        return None, None, None
+
+    def operating_profit(
+        self, period_tags: Iterable[str]
+    ) -> tuple[Decimal | None, str | None, str | None]:
+        if self.is_small:
+            components = (
+                ("RZiS/RZiSPor/C", Decimal("1")),
+                ("RZiS/RZiSPor/D", Decimal("1")),
+                ("RZiS/RZiSPor/E", Decimal("-1")),
+            )
+            calculation_path = "CALC(RZiS/RZiSPor/C + D - E)"
+        elif self.is_micro:
+            components = (
+                ("RZiS/A", Decimal("1")),
+                ("RZiS/B", Decimal("-1")),
+                ("RZiS/C", Decimal("1")),
+                ("RZiS/D", Decimal("-1")),
+            )
+            calculation_path = "CALC(RZiS/A - B + C - D)"
+        else:
+            return None, None, None
+
+        for period_tag in period_tags:
+            total = Decimal("0")
+            for path, sign in components:
+                value = self.values.get(path, {}).get(period_tag)
+                if value is None:
+                    break
+                total += sign * value
+            else:
+                return total, calculation_path, period_tag
+
         return None, None, None
 
     def _index_amounts(self) -> None:
@@ -859,9 +905,14 @@ def fill_period(
             mapping_paths = mapping.consolidated_xml_paths
         elif xml_data.is_small and mapping.small_xml_paths:
             mapping_paths = mapping.small_xml_paths
+        elif xml_data.is_micro and mapping.micro_xml_paths:
+            mapping_paths = mapping.micro_xml_paths
         else:
             mapping_paths = mapping.xml_paths
-        raw_value, xml_path, period_tag = xml_data.amount(mapping_paths, period_tags)
+        if mapping.row_label == "Reported EBIT" and (xml_data.is_small or xml_data.is_micro):
+            raw_value, xml_path, period_tag = xml_data.operating_profit(period_tags)
+        else:
+            raw_value, xml_path, period_tag = xml_data.amount(mapping_paths, period_tags)
 
         if raw_value is None or xml_path is None or period_tag is None:
             messages.append(f"MISS {col_letter}{input_row} {mapping.row_label}: no XML value found")
