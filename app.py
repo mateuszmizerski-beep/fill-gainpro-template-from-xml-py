@@ -150,6 +150,7 @@ if submitted:
                     for job in planned_jobs
                     if job.period_xml_data and job.period_xml_data.requires_annualisation
                 ]
+                micro_jobs = [job for job in planned_jobs if job.xml_data.is_micro]
                 fill_template(args)
                 download_filename = output_filename(xml_paths[0])
             except SystemExit as exc:
@@ -177,6 +178,15 @@ if submitted:
             "Important: a broken fiscal year can only be detected when the XML for "
             "that fiscal year is uploaded. A later full-year XML containing comparative "
             "figures does not provide the prior report's start and end dates."
+        )
+
+    if micro_jobs:
+        years = ", ".join(f"FY{job.year}" for job in micro_jobs)
+        st.warning(
+            f"Mikro financial statement detected for {years}. The Mikro XML does not "
+            "separate other operating from financial items, so exact EBIT is not available. "
+            "Reported EBIT uses A minus B as a core operating result proxy and should "
+            "be checked manually."
         )
 
     st.success("Your filled Excel workbook is ready.")
