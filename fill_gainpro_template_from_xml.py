@@ -102,6 +102,8 @@ MAPPINGS: tuple[Mapping, ...] = (
         confidence_label="EBITDA",
         absolute_value=True,
         micro_xml_paths=("RZiS/B/B_I",),
+        # Consolidated indirect cash flow inserts minority-interest and
+        # equity-method adjustments before depreciation, making D&A A_II_3.
         consolidated_xml_paths=(
             "RZiS/RZiSPor/B/B_I",
             "RachPrzeplywow/PrzeplywyPosr/A/A_II/A_II_3",
@@ -353,10 +355,8 @@ class XmlFinancials:
             components = (
                 ("RZiS/A", Decimal("1")),
                 ("RZiS/B", Decimal("-1")),
-                ("RZiS/C", Decimal("1")),
-                ("RZiS/D", Decimal("-1")),
             )
-            calculation_path = "CALC(RZiS/A - B + C - D)"
+            calculation_path = "CALC(RZiS/A - B; Mikro core operating result proxy)"
         else:
             return None, None, None
 
@@ -879,6 +879,7 @@ def fill_period(
     col = find_year_column(ws, year)
     col_letter = get_column_letter(col)
     messages: list[str] = []
+    matched_fields = 0
     confidence_labels: set[str] = set()
     net_revenue_row = find_row(ws, "Net revenue", "1. REPORTED FIGURES", "2. ADJUSTMENTS ")
     revenue_total_row = find_revenue_split_total_row(ws)
@@ -918,6 +919,8 @@ def fill_period(
             messages.append(f"MISS {col_letter}{input_row} {mapping.row_label}: no XML value found")
             continue
 
+        matched_fields += 1
+
         if mapping.confidence_label:
             confidence_labels.add(mapping.confidence_label)
 
@@ -949,6 +952,13 @@ def fill_period(
                 f"LINK {col_letter}{row} {mapping.row_label}: "
                 f"={col_letter}{input_row}/${col_letter}${annualisation_rows['Annualisation factor']}"
             )
+
+    if matched_fields == 0:
+        statement_name = local_name(xml_data._statement_element.tag)
+        raise ValueError(
+            f"The XML parsed successfully, but no supported financial fields matched "
+            f"for FY{year} ({statement_name}). The schema variant may not be mapped yet."
+        )
 
     net_revenue_cell = ws.cell(row=net_revenue_row, column=col)
     if annualisation_rows:
