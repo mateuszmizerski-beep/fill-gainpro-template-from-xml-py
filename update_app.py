@@ -171,6 +171,7 @@ if submitted:
                     for xml_data in xml_data_files
                     if xml_data.requires_annualisation
                 ]
+                micro_xmls = [xml_data for xml_data in xml_data_files if xml_data.is_micro]
                 name_mismatches = company_name_mismatches(
                     existing_excel.name,
                     xml_data_files,
@@ -217,6 +218,15 @@ if submitted:
             "Important: a broken fiscal year can only be detected when the XML for "
             "that fiscal year is uploaded. A later full-year XML containing comparative "
             "figures does not provide the prior report's start and end dates."
+        )
+
+    if micro_xmls:
+        years = ", ".join(f"FY{xml_data.year}" for xml_data in micro_xmls)
+        st.warning(
+            f"Mikro financial statement detected for {years}. The Mikro XML does not "
+            "separate other operating from financial items, so exact EBIT is not available. "
+            "Reported EBIT uses A minus B as a core operating result proxy and should "
+            "be checked manually."
         )
 
     st.success("Your updated Excel workbook is ready.")
