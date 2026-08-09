@@ -237,7 +237,7 @@ MAPPINGS: tuple[Mapping, ...] = (
     # Scratchpad revenue split
     Mapping(
         "Sales of products",
-        ("RZiS/RZiSKalk/A/A_I", "RZiS/RZiSPor/A/A_I", "RZiS/RZiSKalk/A", "RZiS/RZiSPor/A"),
+        ("RZiS/RZiSKalk/A/A_I", "RZiS/RZiSPor/A/A_I"),
         "Title",
         "Annualisation",
         row_label_fallbacks=("[Line 1]",),
@@ -314,7 +314,10 @@ class XmlFinancials:
 
     @property
     def is_micro(self) -> bool:
-        return local_name(self._statement_element.tag) == "JednostkaMikro"
+        return any(
+            local_name(child.tag).startswith(("BilansJednostkaMikro", "RZiSJednostkaMikro"))
+            for child in list(self._statement_element)
+        )
 
     @property
     def comparative_period_tags(self) -> tuple[str, ...]:
@@ -369,6 +372,35 @@ class XmlFinancials:
                 total += sign * value
             else:
                 return total, calculation_path, period_tag
+
+        return None, None, None
+
+    def inferred_zero_depreciation(
+        self, period_tags: Iterable[str]
+    ) -> tuple[Decimal | None, str | None, str | None]:
+        total_path = "RZiS/RZiSPor/B"
+        depreciation_path = f"{total_path}/B_I"
+        component_paths = tuple(f"{total_path}/B_{suffix}" for suffix in (
+            "II", "III", "IV", "V", "VI", "VII", "VIII"
+        ))
+
+        for period_tag in period_tags:
+            total = self.values.get(total_path, {}).get(period_tag)
+            reported_depreciation = self.values.get(depreciation_path, {}).get(period_tag)
+            if total is None or reported_depreciation is not None:
+                continue
+
+            components = [
+                self.values.get(path, {}).get(period_tag)
+                for path in component_paths
+            ]
+            reported_components = [value for value in components if value is not None]
+            if reported_components and abs(total - sum(reported_components, Decimal("0"))) <= Decimal("0.01"):
+                return (
+                    Decimal("0"),
+                    "CALC(RZiS/RZiSPor/B less reported B_II:B_VIII)",
+                    period_tag,
+                )
 
         return None, None, None
 
@@ -914,6 +946,8 @@ def fill_period(
             raw_value, xml_path, period_tag = xml_data.operating_profit(period_tags)
         else:
             raw_value, xml_path, period_tag = xml_data.amount(mapping_paths, period_tags)
+        if mapping.row_label == "D&A" and raw_value is None:
+            raw_value, xml_path, period_tag = xml_data.inferred_zero_depreciation(period_tags)
 
         if raw_value is None or xml_path is None or period_tag is None:
             messages.append(f"MISS {col_letter}{input_row} {mapping.row_label}: no XML value found")
@@ -921,13 +955,14 @@ def fill_period(
 
         matched_fields += 1
 
-        if mapping.confidence_label:
-            confidence_labels.add(mapping.confidence_label)
-
         normalized_raw_value = abs(raw_value) if mapping.absolute_value else raw_value
         value = scaled_excel_value(
             normalized_raw_value, mapping.scale, mapping.blank_if_zero
         )
+        # Confidence reflects a visible populated figure. XML zeroes are rendered
+        # as blanks, so they must never mark a metric as Actual.
+        if mapping.confidence_label and value is not None:
+            confidence_labels.add(mapping.confidence_label)
         if not overwrite and not cell_is_empty(cell):
             messages.append(f"SKIP {col_letter}{row} {mapping.row_label}: cell already populated")
             continue
