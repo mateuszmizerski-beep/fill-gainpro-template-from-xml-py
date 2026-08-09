@@ -765,6 +765,80 @@ def set_formula_cell(ws, row: int, col: int, formula: str, dry_run: bool) -> Non
         set_formula_font(cell)
 
 
+def configure_ebitda_formulas(ws, col: int, dry_run: bool) -> list[str]:
+    col_letter = get_column_letter(col)
+    reported_ebit_row = find_row(
+        ws, "Reported EBIT", "1. REPORTED FIGURES", "2. ADJUSTMENTS "
+    )
+    depreciation_amortisation_row = find_row(
+        ws, "D&A", "1. REPORTED FIGURES", "2. ADJUSTMENTS "
+    )
+    ebitda_row = find_row(ws, "EBITDA", "1. REPORTED FIGURES", "2. ADJUSTMENTS ")
+    reported_ebit_check_row = find_row(
+        ws, "Reported EBIT Check", "1. REPORTED FIGURES", "2. ADJUSTMENTS "
+    )
+    total_depreciation_row = find_row(
+        ws, "Total depreciation", "1. REPORTED FIGURES", "2. ADJUSTMENTS "
+    )
+    total_amortisation_row = find_row(
+        ws, "Total amortisation", "1. REPORTED FIGURES", "2. ADJUSTMENTS "
+    )
+    adjusted_ebitda_row = find_row(ws, "Adjusted EBITDA", "3. ADJUSTED FIGURES", "Scratchpad")
+    summary_adjusted_ebitda_row = find_row(
+        ws, "Adjusted EBITDA", "1. SUMMARY FINANCIALS", "2. CONFIDENCE LEVEL"
+    )
+    non_recurring_income_row = find_row(
+        ws, "Non-recurring income", "2. ADJUSTMENTS ", "3. ADJUSTED FIGURES"
+    )
+    non_recurring_expenses_row = find_row(
+        ws, "Non-recurring expenses", "2. ADJUSTMENTS ", "3. ADJUSTED FIGURES"
+    )
+    goodwill_impairment_row = find_row(
+        ws, "Goodwill impairment", "2. ADJUSTMENTS ", "3. ADJUSTED FIGURES"
+    )
+
+    ebitda_formula = (
+        f'=IF(OR({col_letter}{reported_ebit_row}="",'
+        f'{col_letter}{depreciation_amortisation_row}=""),"",'
+        f'{col_letter}{reported_ebit_row}+{col_letter}{depreciation_amortisation_row})'
+    )
+    adjusted_ebitda_formula = (
+        f'=IF({col_letter}{ebitda_row}="","",{col_letter}{ebitda_row}+'
+        f'IFERROR({col_letter}{non_recurring_expenses_row}-'
+        f'{col_letter}{non_recurring_income_row},"")+'
+        f'{col_letter}{goodwill_impairment_row})'
+    )
+    reported_ebit_check_formula = (
+        f'=IF(OR({col_letter}{ebitda_row}="",'
+        f'{col_letter}{total_depreciation_row}="",'
+        f'{col_letter}{total_amortisation_row}=""),"",'
+        f'{col_letter}{ebitda_row}-{col_letter}{total_depreciation_row}-'
+        f'{col_letter}{total_amortisation_row})'
+    )
+    summary_adjusted_ebitda_formula = (
+        f'=IF(OR({col_letter}{adjusted_ebitda_row}="",'
+        f'{col_letter}{ebitda_row}=""),"",'
+        f'IF({col_letter}{adjusted_ebitda_row}-{col_letter}{ebitda_row}=0,"",'
+        f'{col_letter}{adjusted_ebitda_row}))'
+    )
+    set_formula_cell(ws, ebitda_row, col, ebitda_formula, dry_run)
+    set_formula_cell(ws, reported_ebit_check_row, col, reported_ebit_check_formula, dry_run)
+    set_formula_cell(ws, adjusted_ebitda_row, col, adjusted_ebitda_formula, dry_run)
+    set_formula_cell(
+        ws,
+        summary_adjusted_ebitda_row,
+        col,
+        summary_adjusted_ebitda_formula,
+        dry_run,
+    )
+    return [
+        f"LINK {col_letter}{ebitda_row} EBITDA: require both Reported EBIT and D&A",
+        f"LINK {col_letter}{reported_ebit_check_row} Reported EBIT Check: require EBITDA detail",
+        f"LINK {col_letter}{adjusted_ebitda_row} Adjusted EBITDA: require EBITDA",
+        f"LINK {col_letter}{summary_adjusted_ebitda_row} Summary Adjusted EBITDA: require EBITDA",
+    ]
+
+
 def configure_annualisation(
     ws,
     period_xml_data: XmlFinancials,
@@ -847,7 +921,9 @@ def configure_annualisation(
             f'-{col_letter}{rows["Total amortisation"]}'
         ),
         "EBITDA": (
-            f'=IFERROR({col_letter}{rows["D&A"]}+{col_letter}{rows["Reported EBIT"]},"")'
+            f'=IF(OR({col_letter}{rows["D&A"]}="",'
+            f'{col_letter}{rows["Reported EBIT"]}=""),"",'
+            f'{col_letter}{rows["D&A"]}+{col_letter}{rows["Reported EBIT"]})'
         ),
     }
     for label, formula in scratchpad_formulas.items():
@@ -878,7 +954,9 @@ def configure_annualisation(
             f'{col_letter}{reported_rows["Other COGS"]},"")'
         ),
         "EBITDA": (
-            f'=IFERROR({col_letter}{reported_rows["D&A"]}+{col_letter}{reported_rows["Reported EBIT"]},"")'
+            f'=IF(OR({col_letter}{reported_rows["D&A"]}="",'
+            f'{col_letter}{reported_rows["Reported EBIT"]}=""),"",'
+            f'{col_letter}{reported_rows["D&A"]}+{col_letter}{reported_rows["Reported EBIT"]})'
         ),
     }
     for label, formula in reported_formulas.items():
@@ -1041,6 +1119,8 @@ def fill_period(
         messages.append(f"LINK {col_letter}{interest_bearing_debt_row} Interest-bearing debt: {debt_formula}")
     else:
         messages.append(f"SKIP {col_letter}{interest_bearing_debt_row} Interest-bearing debt: cell already populated")
+
+    messages.extend(configure_ebitda_formulas(ws, col, dry_run))
 
     for confidence_label in sorted(confidence_labels):
         try:
