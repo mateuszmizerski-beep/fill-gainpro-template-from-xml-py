@@ -32,6 +32,7 @@ except ImportError as exc:  # pragma: no cover - user environment guard
 HEADER_ROW = 2
 FINANCIALS_SHEET = "Financials"
 PLN_TO_PLNM = Decimal("1000000")
+PLN_THOUSANDS_TO_PLNM = Decimal("1000")
 CURRENT_PERIOD_TAG = "KwotaA"
 CAGR_COLUMN = 21  # Column U
 MIN_ANNUALISATION_DAYS = 90
@@ -44,10 +45,12 @@ AMOUNT_TAGS = {"KwotaA", "KwotaB", "KwotaB1"}
 PRESERVED_COLUMNS = {1, 2, 3, 4, 20, 21}  # A:D, T:U
 STATEMENT_ROOT_TAGS = {
     "JednostkaInna",
+    "JednostkaInnaWTys",
     "JednostkaMala",
     "JednostkaMikro",
     "JednostkaOp",
     "SkonsolidowanaJednostkaInna",
+    "SkonsolidowanaJednostkaInnaWTys",
 }
 STATEMENT_SECTION_TAGS = {"Bilans", "RZiS", "RachPrzeplywow"}
 
@@ -270,6 +273,7 @@ class XmlFinancials:
         self.period_end = self._first_text("OkresDo")
         self.period_start = self._first_text("OkresOd")
         self.company = self._first_text("NazwaFirmy")
+        self.report_code = self._first_text("KodSprawozdania")
         self._statement_element = self._statement_root()
         self._index_amounts()
 
@@ -318,6 +322,18 @@ class XmlFinancials:
             local_name(child.tag).startswith(("BilansJednostkaMikro", "RZiSJednostkaMikro"))
             for child in list(self._statement_element)
         )
+
+    @property
+    def is_reported_in_thousands(self) -> bool:
+        statement_name = local_name(self._statement_element.tag).lower()
+        report_code = (self.report_code or "").lower()
+        return "wtys" in statement_name or "wtysiac" in report_code
+
+    @property
+    def plnm_scale(self) -> Decimal:
+        if self.is_reported_in_thousands:
+            return PLN_THOUSANDS_TO_PLNM
+        return PLN_TO_PLNM
 
     @property
     def comparative_period_tags(self) -> tuple[str, ...]:
@@ -1034,8 +1050,13 @@ def fill_period(
         matched_fields += 1
 
         normalized_raw_value = abs(raw_value) if mapping.absolute_value else raw_value
+        scale = (
+            xml_data.plnm_scale
+            if mapping.scale == PLN_TO_PLNM
+            else mapping.scale
+        )
         value = scaled_excel_value(
-            normalized_raw_value, mapping.scale, mapping.blank_if_zero
+            normalized_raw_value, scale, mapping.blank_if_zero
         )
         # Confidence reflects a visible populated figure. XML zeroes are rendered
         # as blanks, so they must never mark a metric as Actual.
