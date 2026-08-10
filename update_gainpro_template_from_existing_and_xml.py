@@ -112,12 +112,13 @@ def copy_sheet_contents(source: Worksheet, destination: Worksheet) -> None:
     for merged_range in source.merged_cells.ranges:
         destination.merge_cells(str(merged_range))
 
-    for row in source.iter_rows():
-        for source_cell in row:
-            destination_cell = destination.cell(source_cell.row, source_cell.column)
-            if isinstance(destination_cell, MergedCell):
-                continue
-            copy_cell(source_cell, destination_cell, copy_formula=True)
+    # iter_rows() trusts Excel's declared used range. A stray formatted cell can
+    # expand that range to row 1,048,576 and exhaust Streamlit's memory.
+    for source_cell in source._cells.values():
+        destination_cell = destination.cell(source_cell.row, source_cell.column)
+        if isinstance(destination_cell, MergedCell):
+            continue
+        copy_cell(source_cell, destination_cell, copy_formula=True)
 
     copy_row_and_column_dimensions(source, destination)
     destination.freeze_panes = source.freeze_panes
@@ -179,6 +180,20 @@ def is_substantive_value(value: object) -> bool:
     return True
 
 
+def meaningful_max_row(ws: Worksheet) -> int:
+    """Return the last row containing real workbook content, ignoring phantom styles."""
+    return max(
+        (
+            cell.row
+            for cell in ws._cells.values()
+            if cell.value not in (None, "")
+            or cell.comment is not None
+            or cell.hyperlink is not None
+        ),
+        default=1,
+    )
+
+
 def financial_year_columns(ws: Worksheet) -> dict[int, int]:
     columns: dict[int, int] = {}
     for cell in ws[HEADER_ROW]:
@@ -190,9 +205,10 @@ def financial_year_columns(ws: Worksheet) -> dict[int, int]:
 
 def active_years(ws: Worksheet) -> list[int]:
     years: list[int] = []
+    last_row = meaningful_max_row(ws)
     for year, column in financial_year_columns(ws).items():
         substantive_cells = 0
-        for row in range(1, ws.max_row + 1):
+        for row in range(1, last_row + 1):
             if is_substantive_value(ws.cell(row=row, column=column).value):
                 substantive_cells += 1
             if substantive_cells >= 3:
@@ -203,7 +219,7 @@ def active_years(ws: Worksheet) -> list[int]:
 
 def first_label_after(ws: Worksheet, label: str, after_row: int = 0) -> int | None:
     label_norm = normalize(label)
-    for row in range(after_row + 1, ws.max_row + 1):
+    for row in range(after_row + 1, meaningful_max_row(ws) + 1):
         if normalize(source_row_label(ws, row)) == label_norm:
             return row
     return None
@@ -230,15 +246,15 @@ def context_ranges(ws: Worksheet) -> list[tuple[int, int, str, str | None]]:
     if adjusted and scratchpad:
         ranges.append((adjusted, scratchpad, "3. ADJUSTED FIGURES", "Scratchpad"))
     if scratchpad:
-        scratchpad_end = debt or annualisation or ws.max_row + 1
+        scratchpad_end = debt or annualisation or meaningful_max_row(ws) + 1
         ranges.append((scratchpad, scratchpad_end, "Scratchpad", "Interest bearing debt / gross debt"))
     if debt:
-        debt_end = title or annualisation or ws.max_row + 1
+        debt_end = title or annualisation or meaningful_max_row(ws) + 1
         ranges.append((debt, debt_end, "Interest bearing debt / gross debt", "Annualisation"))
     if title and annualisation:
         ranges.append((title, annualisation, "Title", "Annualisation"))
     if annualisation:
-        ranges.append((annualisation, ws.max_row + 1, "Annualisation", None))
+        ranges.append((annualisation, meaningful_max_row(ws) + 1, "Annualisation", None))
     return ranges
 
 
@@ -301,7 +317,7 @@ def unique_label_row(ws: Worksheet, *labels: str) -> int | None:
     label_norms = {normalize(label) for label in labels}
     matches = [
         row
-        for row in range(1, ws.max_row + 1)
+        for row in range(1, meaningful_max_row(ws) + 1)
         if normalize(source_row_label(ws, row)) in label_norms
     ]
     return matches[0] if len(matches) == 1 else None
@@ -385,7 +401,7 @@ def migrate_financials_columns(
         destination_col = destination_year_columns[year]
         copied = 0
 
-        for row in range(1, source_ws.max_row + 1):
+        for row in range(1, meaningful_max_row(source_ws) + 1):
             if row in revenue_component_rows or row == source_revenue_total:
                 continue
             source_cell = source_ws.cell(row=row, column=source_col)
